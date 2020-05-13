@@ -1,0 +1,59 @@
+version: 2.1
+orbs:
+  node: circleci/node@1.1.6
+
+executors:
+  executor-node:
+    docker:
+      - image: circleci/node:10.7.0-browsers
+        environment:
+          PROJECT: happyhourfinder
+
+jobs:
+  build-and-test:
+    executor: executor-node
+    steps:
+      - checkout
+      - node/with-cache:
+          steps:
+            - run: npm install
+            - run: npm test
+  build-and-publish:
+    executor: executor-node
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+          - v1-dependencies-{{ checksum "package.json" }}
+          - v1-dependencies-
+      - setup_remote_docker
+      - run:
+          name: Packaging
+          command: npm run build
+      - save_cache:
+          key: v1-dependencies-{{ checksum "package.json" }}
+          paths:
+          - ~/.m2
+      - run:
+          name: Build Docker Image
+          command: docker build -t $PROJECT/$CIRCLE_PROJECT_REPONAME .
+      - run:
+          name: Push Docker Image
+          command: |
+            echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+            docker push $PROJECT/$CIRCLE_PROJECT_REPONAME
+            VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            docker tag $PROJECT/$CIRCLE_PROJECT_REPONAME $PROJECT/$CIRCLE_PROJECT_REPONAME:${VERSION}
+            docker push $PROJECT/$CIRCLE_PROJECT_REPONAME:${VERSION}
+
+workflows:
+  build-and-test:
+    jobs:
+      - build-and-test
+      - build-and-publish:
+          requires:
+            - build-and-test
+          filters:
+            branches:
+              only:
+                - master
